@@ -215,7 +215,7 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						if ack {
 							break
 						}
-						log.Println("Rabbitmq Push didn't confirm. Retrying...")
+						log.Println("Rabbitmq Push didn't confirm. Retrying...", msg.Exchange, msg.Routing_key)
 					}
 				}
 			}
