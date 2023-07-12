@@ -48,27 +48,43 @@ func NewConnect(url string) (*Connection, error) {
 }
 
 func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeOptions, queuOpt QueueOption, cons chan MessageAmpq) (*Channel, error) {
-	consumeCh, err := conn.Channel(false)
+	consumeCh, err := conn.Channel(false, "consumer ")
 	if err != nil {
 		log.Panic(err)
 	}
-	_, err = consumeCh.QueueDeclare(queuOpt.Name, queuOpt.Durable, queuOpt.Durable, queuOpt.Exclusive, queuOpt.NoWait, queuOpt.Args)
+
+	channel := consumeCh.GetOrigChannel()
+	for {
+		if channel == nil {
+			if consumeCh.IsClosed() {
+				return nil, fmt.Errorf("close")
+			}
+			time.Sleep(time.Millisecond * 10)
+			continue
+		}
+		break
+	}
+
+	_, err = channel.QueueDeclare(queuOpt.Name, queuOpt.Durable, queuOpt.Durable, queuOpt.Exclusive, queuOpt.NoWait, queuOpt.Args)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, ex := range exchOpt {
-		err = consumeCh.ExchangeDeclare(ex.Name, amqp.ExchangeTopic, ex.Durable, ex.AutoDelete, ex.Internal, ex.NoWait, ex.Args)
+		err = channel.ExchangeDeclare(ex.Name, amqp.ExchangeTopic, ex.Durable, ex.AutoDelete, ex.Internal, ex.NoWait, ex.Args)
 		if err != nil {
 			return nil, err
 		}
 		for _, key := range ex.Keys {
-			if err := consumeCh.QueueBind(queuOpt.Name, key, ex.Name, false, nil); err != nil {
+			if err := channel.QueueBind(queuOpt.Name, key, ex.Name, false, nil); err != nil {
 				return nil, err
 			}
 		}
 	}
-	err = consumeCh.Qos(queuOpt.QOS, 0, false)
+	err = channel.Qos(queuOpt.QOS, 0, false)
+	if err != nil {
+		fmt.Println("error", err)
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -95,7 +111,7 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 }
 
 func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(false)
+	sendCh, err := conn.Channel(false, "pub ")
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +125,16 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 				return
 			case msg := <-pub:
 				for {
-					err := sendCh.Publish(msg.Exchange, msg.Routing_key, false, false, amqp.Publishing{
+					channel := sendCh.GetOrigChannel()
+					if channel == nil {
+						if sendCh.IsClosed() {
+							return
+						}
+						time.Sleep(time.Millisecond * 10)
+						continue
+					}
+
+					err := channel.Publish(msg.Exchange, msg.Routing_key, false, false, amqp.Publishing{
 						ContentType: msg.Content_type,
 						Body:        msg.Data,
 					})
@@ -130,7 +155,7 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 }
 
 func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(true)
+	sendCh, err := conn.Channel(true, "pub ")
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +171,8 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 			defer wg.Done()
 			defer fmt.Println("end notify confirm pub")
 			for {
-				if sendCh.notifyConfirm == nil {
+				ch := sendCh.GetNotifyConfirm()
+				if ch == nil {
 					select {
 					case <-ctx.Done():
 						close(notifyConfirmPub)
@@ -155,11 +181,12 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						continue
 					}
 				}
+
 				select {
 				case <-ctx.Done():
 					close(notifyConfirmPub)
 					return
-				case c, ok := <-sendCh.notifyConfirm:
+				case c, ok := <-ch:
 					if ok {
 						if atomic.LoadInt32(&waitConfirm) == 1 {
 							notifyConfirmPub <- c
@@ -177,11 +204,20 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 				return
 			case msg := <-pub:
 				for {
+					channel := sendCh.GetOrigChannel()
+					if channel == nil {
+						if sendCh.IsClosed() {
+							return
+						}
+						time.Sleep(time.Millisecond * 10)
+						continue
+					}
+
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 
 					atomic.StoreInt32(&waitConfirm, 1)
-					err := sendCh.PublishWithContext(
+					err := channel.PublishWithContext(
 						ctx,
 						msg.Exchange,    // Exchange
 						msg.Routing_key, // Routing key
