@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -48,7 +49,7 @@ func NewConnect(url string) (*Connection, error) {
 }
 
 func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeOptions, queuOpt QueueOption, cons chan MessageAmpq) (*Channel, error) {
-	consumeCh, err := conn.Channel(false, "consumer ")
+	consumeCh, err := conn.Channel(false, "consumer ", queuOpt.QOS)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -81,10 +82,6 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 			}
 		}
 	}
-	err = channel.Qos(queuOpt.QOS, 0, false)
-	if err != nil {
-		fmt.Println("error", err)
-	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -111,7 +108,7 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 }
 
 func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(false, "pub ")
+	sendCh, err := conn.Channel(false, "pub ", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +152,7 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 }
 
 func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(true, "pub ")
+	sendCh, err := conn.Channel(true, "pub ", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +163,7 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 		defer fmt.Println("end pub")
 		notifyConfirmPub := make(chan amqp.Confirmation)
 		var waitConfirm int32
+		var lockConfirmPub int32
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -189,7 +187,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 				case c, ok := <-ch:
 					if ok {
 						if atomic.LoadInt32(&waitConfirm) == 1 {
+							atomic.StoreInt32(&lockConfirmPub, 1)
 							notifyConfirmPub <- c
+							atomic.StoreInt32(&lockConfirmPub, 0)
 						}
 					} else {
 						time.Sleep(time.Millisecond * 100)
@@ -238,16 +238,27 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 					} else {
 						// only ack the source delivery when the destination acks the publishing
 						var ack bool
-						select {
-						case confirm := <-notifyConfirmPub:
-							if confirm.Ack {
-								ack = true
+						for {
+							select {
+							case confirm := <-notifyConfirmPub:
+								if confirm.Ack {
+									ack = true
+									atomic.StoreInt32(&waitConfirm, 0)
+									//log.Println("Rabbitmq Push confirmed!")
+								}
 								atomic.StoreInt32(&waitConfirm, 0)
-								//log.Println("Rabbitmq Push confirmed!")
+							case <-time.After(time.Second * time.Duration(delay)):
+								atomic.StoreInt32(&waitConfirm, 0)
 							}
-						case <-time.After(time.Second * time.Duration(delay)):
+							if atomic.LoadInt32(&lockConfirmPub) == 1 {
+								runtime.Gosched()
+								if atomic.LoadInt32(&lockConfirmPub) == 1 {
+									fmt.Println("atomic.LoadInt32(&lockConfirmPub) == 1")
+									continue
+								}
+							}
+							break
 						}
-						atomic.StoreInt32(&waitConfirm, 0)
 						if ack {
 							break
 						}

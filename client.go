@@ -58,7 +58,7 @@ func (c *Connection) Close() error {
 }
 
 // Channel wrap amqp.Connection.Channel, get a auto reconnect channel
-func (c *Connection) Channel(sendConfirm bool, name string) (*Channel, error) {
+func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, error) {
 	connect := c.GetConnect()
 
 	ch, err := connect.Channel()
@@ -72,12 +72,26 @@ func (c *Connection) Channel(sendConfirm bool, name string) (*Channel, error) {
 
 	if sendConfirm {
 		notifyPub := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-		ch.Confirm(false)
+		if err := ch.Confirm(false); err != nil {
+			debugf("%sinit Confirm err:%s", name, err)
+		}
+		if qos != 0 {
+			err = ch.Qos(qos, 0, false)
+			if err != nil {
+				fmt.Println("error", err)
+			}
+		}
 		channel.mu.Lock()
 		channel.notifyConfirm = notifyPub
 		channel.channel = ch
 		channel.mu.Unlock()
 	} else {
+		if qos != 0 {
+			err = ch.Qos(qos, 0, false)
+			if err != nil {
+				fmt.Println("error", err)
+			}
+		}
 		channel.mu.Lock()
 		channel.channel = ch
 		channel.mu.Unlock()
@@ -105,12 +119,26 @@ func (c *Connection) Channel(sendConfirm bool, name string) (*Channel, error) {
 				if err == nil {
 					if sendConfirm {
 						notifyPub := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-						ch.Confirm(false)
+						if err := ch.Confirm(false); err != nil {
+							debugf("%sinit Confirm err:%s", name, err)
+						}
+						if qos != 0 {
+							err = ch.Qos(qos, 0, false)
+							if err != nil {
+								fmt.Println("error", err)
+							}
+						}
 						channel.mu.Lock()
 						channel.notifyConfirm = notifyPub
 						channel.channel = ch
 						channel.mu.Unlock()
 					} else {
+						if qos != 0 {
+							err = ch.Qos(qos, 0, false)
+							if err != nil {
+								fmt.Println("error", err)
+							}
+						}
 						channel.mu.Lock()
 						channel.channel = ch
 						channel.mu.Unlock()
