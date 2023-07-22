@@ -130,7 +130,7 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 						time.Sleep(time.Millisecond * 10)
 						continue
 					}
-
+					atomic.AddInt32(&sendCh.counterPubMsgRMQ, 1)
 					err := channel.Publish(msg.Exchange, msg.Routing_key, false, false, amqp.Publishing{
 						ContentType: msg.Content_type,
 						Body:        msg.Data,
@@ -216,6 +216,7 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 					defer cancel()
 
+					atomic.AddInt32(&sendCh.counterPubMsgRMQ, 1)
 					atomic.StoreInt32(&waitConfirm, 1)
 					err := channel.PublishWithContext(
 						ctx,

@@ -156,11 +156,16 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 
 // Channel amqp.Channel wapper
 type Channel struct {
-	Name          string
-	channel       *amqp.Channel
-	closed        int32
-	notifyConfirm chan amqp.Confirmation
-	mu            sync.Mutex
+	Name             string
+	channel          *amqp.Channel
+	closed           int32
+	notifyConfirm    chan amqp.Confirmation
+	mu               sync.Mutex
+	counterPubMsgRMQ int32 // кол-во отправленных сообщений через rabbitmq
+}
+
+func (ch *Channel) GetCounterPubMsg() int32 {
+	return atomic.LoadInt32(&ch.counterPubMsgRMQ)
 }
 
 func (ch *Channel) GetOrigChannel() *amqp.Channel {
