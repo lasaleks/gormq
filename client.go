@@ -2,8 +2,10 @@ package gormq3
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"sync/atomic"
@@ -27,53 +29,124 @@ var delay = getReconnDelay() // reconnect after delay seconds
 
 // Connection amqp.Connection wrapper
 type Connection struct {
-	*amqp.Connection
+	connection *amqp.Connection
+	mu         sync.Mutex
+}
+
+func (c *Connection) GetConnect() *amqp.Connection {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connection
+}
+
+func (c *Connection) LocalAddr() net.Addr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connection.LocalAddr()
+}
+
+func (c *Connection) RemoteAddr() net.Addr {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connection.RemoteAddr()
+}
+
+func (c *Connection) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connection.Close()
 }
 
 // Channel wrap amqp.Connection.Channel, get a auto reconnect channel
-func (c *Connection) Channel(sendConfirm bool) (*Channel, error) {
-	ch, err := c.Connection.Channel()
+func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, error) {
+	connect := c.GetConnect()
+
+	ch, err := connect.Channel()
 	if err != nil {
 		return nil, err
 	}
 
 	channel := &Channel{
-		Channel: ch,
+		mu: sync.Mutex{},
 	}
 
 	if sendConfirm {
-		channel.notifyConfirm = channel.NotifyPublish(make(chan amqp.Confirmation, 1))
-		channel.Confirm(false)
+		notifyPub := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+		if err := ch.Confirm(false); err != nil {
+			debugf("%sinit Confirm err:%s", name, err)
+		}
+		if qos != 0 {
+			err = ch.Qos(qos, 0, false)
+			if err != nil {
+				fmt.Println("error", err)
+			}
+		}
+		channel.mu.Lock()
+		channel.notifyConfirm = notifyPub
+		channel.channel = ch
+		channel.mu.Unlock()
+	} else {
+		if qos != 0 {
+			err = ch.Qos(qos, 0, false)
+			if err != nil {
+				fmt.Println("error", err)
+			}
+		}
+		channel.mu.Lock()
+		channel.channel = ch
+		channel.mu.Unlock()
 	}
 
 	go func() {
 		for {
-			reason, ok := <-channel.Channel.NotifyClose(make(chan *amqp.Error))
-			channel.notifyConfirm = nil
+			reason, ok := <-channel.channel.NotifyClose(make(chan *amqp.Error))
+			//channel.notifyConfirm = nil
 			// exit this goroutine if closed by developer
 			if !ok || channel.IsClosed() {
-				debug("channel closed")
+				debugf("%schannel closed", name)
 				channel.Close() // close again, ensure closed flag set when connection closed
 				break
 			}
-			debugf("channel closed, reason: %v", reason)
+			debugf("%schannel closed, reason: %v", reason, name)
 
 			// reconnect if not closed by developer
 			for {
 				// wait 1s for connection reconnect
 				time.Sleep(time.Duration(delay) * time.Second)
 
-				ch, err := c.Connection.Channel()
+				connect := c.GetConnect()
+				ch, err := connect.Channel()
 				if err == nil {
-					channel.Channel = ch
-					debug("channel recreate success")
 					if sendConfirm {
-						channel.notifyConfirm = ch.NotifyPublish(make(chan amqp.Confirmation, 1))
-						channel.Confirm(false)
+						notifyPub := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+						if err := ch.Confirm(false); err != nil {
+							debugf("%sinit Confirm err:%s", name, err)
+						}
+						if qos != 0 {
+							err = ch.Qos(qos, 0, false)
+							if err != nil {
+								fmt.Println("error", err)
+							}
+						}
+						channel.mu.Lock()
+						channel.notifyConfirm = notifyPub
+						channel.channel = ch
+						channel.mu.Unlock()
+					} else {
+						if qos != 0 {
+							err = ch.Qos(qos, 0, false)
+							if err != nil {
+								fmt.Println("error", err)
+							}
+						}
+						channel.mu.Lock()
+						channel.channel = ch
+						channel.mu.Unlock()
 					}
+					debugf("%schannel recreate success", name)
 					break
 				}
-				debugf("channel recreate failed, err: %v", err)
+				debugf("%schannel recreate failed, err: %v", name, err)
 			}
 		}
 	}()
@@ -81,107 +154,30 @@ func (c *Connection) Channel(sendConfirm bool) (*Channel, error) {
 	return channel, nil
 }
 
-// Dial wrap amqp.Dial, dial and get a reconnect connection
-func Dial(url string) (*Connection, error) {
-	conn, err := amqp.Dial(url)
-	if err != nil {
-		return nil, err
-	}
-
-	connection := &Connection{
-		Connection: conn,
-	}
-
-	go func() {
-		for {
-			reason, ok := <-connection.Connection.NotifyClose(make(chan *amqp.Error))
-			// exit this goroutine if closed by developer
-			if !ok {
-				debug("connection closed")
-				break
-			}
-			debugf("connection closed, reason: %v", reason)
-
-			// reconnect if not closed by developer
-			for {
-				// wait 1s for reconnect
-				time.Sleep(time.Duration(delay) * time.Second)
-
-				conn, err := amqp.Dial(url)
-				if err == nil {
-					connection.Connection = conn
-					debugf("reconnect success")
-					break
-				}
-
-				debugf("reconnect failed, err: %v", err)
-			}
-		}
-	}()
-
-	return connection, nil
-}
-
-// DialCluster with reconnect
-func DialCluster(urls []string) (*Connection, error) {
-	nodeSequence := 0
-	conn, err := amqp.Dial(urls[nodeSequence])
-
-	if err != nil {
-		return nil, err
-	}
-	connection := &Connection{
-		Connection: conn,
-	}
-
-	go func(urls []string, seq *int) {
-		for {
-			reason, ok := <-connection.Connection.NotifyClose(make(chan *amqp.Error))
-			if !ok {
-				debug("connection closed")
-				break
-			}
-			debugf("connection closed, reason: %v", reason)
-
-			// reconnect with another node of cluster
-			for {
-				time.Sleep(time.Duration(delay) * time.Second)
-
-				newSeq := next(urls, *seq)
-				*seq = newSeq
-
-				conn, err := amqp.Dial(urls[newSeq])
-				if err == nil {
-					connection.Connection = conn
-					debugf("reconnect success")
-					break
-				}
-
-				debugf("reconnect failed, err: %v", err)
-			}
-		}
-	}(urls, &nodeSequence)
-
-	return connection, nil
-}
-
-// Next element index of slice
-func next(s []string, lastSeq int) int {
-	length := len(s)
-	if length == 0 || lastSeq == length-1 {
-		return 0
-	} else if lastSeq < length-1 {
-		return lastSeq + 1
-	} else {
-		return -1
-	}
-}
-
 // Channel amqp.Channel wapper
 type Channel struct {
-	*amqp.Channel
-	closed        int32
-	notifyConfirm chan amqp.Confirmation
+	Name             string
+	channel          *amqp.Channel
+	closed           int32
+	notifyConfirm    chan amqp.Confirmation
+	mu               sync.Mutex
+	counterPubMsgRMQ int32 // кол-во отправленных сообщений через rabbitmq
+}
+
+func (ch *Channel) GetCounterPubMsg() int32 {
+	return atomic.LoadInt32(&ch.counterPubMsgRMQ)
+}
+
+func (ch *Channel) GetOrigChannel() *amqp.Channel {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.channel
+}
+
+func (ch *Channel) GetNotifyConfirm() chan amqp.Confirmation {
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
+	return ch.notifyConfirm
 }
 
 // IsClosed indicate closed by developer
@@ -197,7 +193,7 @@ func (ch *Channel) Close() error {
 
 	atomic.StoreInt32(&ch.closed, 1)
 
-	return ch.Channel.Close()
+	return ch.channel.Close()
 }
 
 // Consume wrap amqp.Channel.Consume, the returned delivery will end only when channel closed by developer
@@ -207,7 +203,19 @@ func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, 
 	go func() {
 		defer close(deliveries)
 		for {
-			d, err := ch.Channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+			channel := ch.GetOrigChannel()
+			for {
+				if channel == nil {
+					if ch.IsClosed() {
+						break
+					}
+					time.Sleep(time.Duration(delay) * time.Second)
+					continue
+				}
+				break
+			}
+
+			d, err := channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
 			if err != nil {
 				debugf("consume failed, err: %v", err)
 				if ch.IsClosed() {
@@ -231,4 +239,108 @@ func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, 
 		}
 	}()
 	return deliveries, nil
+}
+
+// Dial wrap amqp.Dial, dial and get a reconnect connection
+func Dial(url string) (*Connection, error) {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return nil, err
+	}
+
+	connection := &Connection{
+		connection: conn,
+		mu:         sync.Mutex{},
+	}
+
+	go func() {
+		for {
+			connect := connection.GetConnect()
+
+			reason, ok := <-connect.NotifyClose(make(chan *amqp.Error))
+			// exit this goroutine if closed by developer
+			if !ok {
+				debugf("connection closed")
+				break
+			}
+			debugf("connection closed, reason: %v", reason)
+
+			// reconnect if not closed by developer
+			for {
+				// wait 1s for reconnect
+				time.Sleep(time.Duration(delay) * time.Second)
+
+				conn, err := amqp.Dial(url)
+				if err == nil {
+					connection.mu.Lock()
+					connection.connection = conn
+					connection.mu.Unlock()
+					debugf("reconnect success")
+					break
+				}
+
+				debugf("reconnect failed, err: %v", err)
+			}
+		}
+	}()
+
+	return connection, nil
+}
+
+// DialCluster with reconnect
+func DialCluster(urls []string) (*Connection, error) {
+	nodeSequence := 0
+	conn, err := amqp.Dial(urls[nodeSequence])
+
+	if err != nil {
+		return nil, err
+	}
+	connection := &Connection{
+		connection: conn,
+	}
+
+	go func(urls []string, seq *int) {
+		for {
+			connect := connection.GetConnect()
+			reason, ok := <-connect.NotifyClose(make(chan *amqp.Error))
+			if !ok {
+				debugf("connection closed")
+				break
+			}
+			debugf("connection closed, reason: %v", reason)
+
+			// reconnect with another node of cluster
+			for {
+				time.Sleep(time.Duration(delay) * time.Second)
+
+				newSeq := next(urls, *seq)
+				*seq = newSeq
+
+				conn, err := amqp.Dial(urls[newSeq])
+				if err == nil {
+					connection.mu.Lock()
+					connection.connection = conn
+					connection.mu.Unlock()
+					debugf("reconnect success")
+					break
+				}
+
+				debugf("reconnect failed, err: %v", err)
+			}
+		}
+	}(urls, &nodeSequence)
+
+	return connection, nil
+}
+
+// Next element index of slice
+func next(s []string, lastSeq int) int {
+	length := len(s)
+	if length == 0 || lastSeq == length-1 {
+		return 0
+	} else if lastSeq < length-1 {
+		return lastSeq + 1
+	} else {
+		return -1
+	}
 }
