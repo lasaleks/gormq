@@ -1,4 +1,4 @@
-module bitbucket.org/lasaleks/gormq3
+module github.com/lasaleks/gormq3
 
 go 1.19
 
