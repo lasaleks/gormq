@@ -1,4 +1,4 @@
-module github.com/lasaleks/gormq3
+module github.com/lasaleks/gormq
 
 go 1.19
 
