@@ -1,4 +1,4 @@
-package gormq3
+package gormq
 
 import "log"
 
