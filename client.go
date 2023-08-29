@@ -98,14 +98,13 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 	}
 
 	go func() {
+		defer debugf("Channel %s end", name)
 		for {
 			reason, ok := <-channel.channel.NotifyClose(make(chan *amqp.Error))
-			//channel.notifyConfirm = nil
 			// exit this goroutine if closed by developer
 			if !ok || channel.IsClosed() {
-				debugf("%schannel closed", name)
-				channel.Close() // close again, ensure closed flag set when connection closed
-				break
+				debugf("%schannel close", name)
+				channel.GetOrigChannel().Close()
 			}
 			debugf("%schannel closed, reason: %v", reason, name)
 
@@ -125,7 +124,7 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 						if qos != 0 {
 							err = ch.Qos(qos, 0, false)
 							if err != nil {
-								fmt.Println("error", err)
+								debugf("set qos error:%s", err)
 							}
 						}
 						channel.mu.Lock()
@@ -136,7 +135,7 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 						if qos != 0 {
 							err = ch.Qos(qos, 0, false)
 							if err != nil {
-								fmt.Println("error", err)
+								debugf("set qos error: %s", err)
 							}
 						}
 						channel.mu.Lock()
