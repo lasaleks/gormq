@@ -19,7 +19,7 @@ func main() {
 	ctx := context.Background()
 	CH_MSG_AMPQ = make(chan gormq3.MessageAmpq, 1)
 
-	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@192.168.67.3:5672/")
+	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
 	if err != nil {
 		log.Panicln("connect rabbitmq", err)
 	}
@@ -27,10 +27,10 @@ func main() {
 	chCons, err := gormq3.NewChannelConsumer(
 		&wg, conn_rmq, []gormq3.ExhangeOptions{
 			{
-				Name:         "xxxb",
+				Name:         "testgorm",
 				ExchangeType: "topic",
 				Keys: []string{
-					"event.#",
+					"#",
 				},
 			},
 		},
@@ -42,6 +42,7 @@ func main() {
 	)
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
+		fmt.Println("Run Consumer")
 		for {
 			select {
 			case <-ctx.Done():
@@ -52,6 +53,7 @@ func main() {
 		}
 	}()
 	f_shutdown := func(ctx context.Context) {
+		chCons.Close()
 		cancel()
 	}
 	wg.Add(1)
