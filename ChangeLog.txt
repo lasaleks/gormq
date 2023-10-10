@@ -1,2 +1,5 @@
+v1.0.5
++ example consumer
+bag fix end gorotune
 v1.0.2
 Bag fixed channel reconnection
