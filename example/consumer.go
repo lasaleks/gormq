@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"sync"
 
-	"bitbucket.org/lasaleks/gormq3"
+	gormq3 "github.com/lasaleks/gormq"
 	"github.com/lasaleks/ie_common_utils_go"
 )
 
@@ -19,11 +20,14 @@ func main() {
 	ctx := context.Background()
 	CH_MSG_AMPQ = make(chan gormq3.MessageAmpq, 1)
 
+	ie_common_utils_go.CreatePidFile("/tmp/test_gormq_cons.pid")
+	defer os.Remove("/tmp/test_gormq_cons.pid")
+
 	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
 	if err != nil {
 		log.Panicln("connect rabbitmq", err)
 	}
-
+	gormq3.Debug = true
 	chCons, err := gormq3.NewChannelConsumer(
 		&wg, conn_rmq, []gormq3.ExhangeOptions{
 			{
@@ -58,6 +62,6 @@ func main() {
 	}
 	wg.Add(1)
 	go ie_common_utils_go.WaitSignalExit(&wg, ctx, f_shutdown)
-	// ждем освобождение горутин
 	wg.Wait()
+	fmt.Println("End")
 }

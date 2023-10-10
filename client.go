@@ -58,7 +58,7 @@ func (c *Connection) Close() error {
 }
 
 // Channel wrap amqp.Connection.Channel, get a auto reconnect channel
-func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, error) {
+func (c *Connection) Channel(wg *sync.WaitGroup, sendConfirm bool, name string, qos int) (*Channel, error) {
 	connect := c.GetConnect()
 
 	ch, err := connect.Channel()
@@ -97,7 +97,9 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 		channel.mu.Unlock()
 	}
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer debugf("Channel %s end", name)
 		for {
 			reason, ok := <-channel.channel.NotifyClose(make(chan *amqp.Error))
@@ -105,6 +107,7 @@ func (c *Connection) Channel(sendConfirm bool, name string, qos int) (*Channel, 
 			if !ok || channel.IsClosed() {
 				debugf("%schannel close", name)
 				channel.GetOrigChannel().Close()
+				return
 			}
 			debugf("%schannel closed, reason: %v", reason, name)
 

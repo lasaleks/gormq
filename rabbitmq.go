@@ -49,7 +49,7 @@ func NewConnect(url string) (*Connection, error) {
 }
 
 func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeOptions, queuOpt QueueOption, cons chan MessageAmpq) (*Channel, error) {
-	consumeCh, err := conn.Channel(false, "consumer ", queuOpt.QOS)
+	consumeCh, err := conn.Channel(wg, false, "consumer ", queuOpt.QOS)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -108,7 +108,7 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 }
 
 func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(false, "pub ", 0)
+	sendCh, err := conn.Channel(wg, false, "pub ", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 }
 
 func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
-	sendCh, err := conn.Channel(true, "pub ", 0)
+	sendCh, err := conn.Channel(wg, true, "pub ", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 							if atomic.LoadInt32(&lockConfirmPub) == 1 {
 								runtime.Gosched()
 								if atomic.LoadInt32(&lockConfirmPub) == 1 {
-									fmt.Println("atomic.LoadInt32(&lockConfirmPub) == 1")
+									debugf("atomic.LoadInt32(&lockConfirmPub) == 1")
 									continue
 								}
 							}
