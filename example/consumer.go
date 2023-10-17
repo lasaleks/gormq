@@ -7,8 +7,8 @@ import (
 	"os"
 	"sync"
 
+	goutils "github.com/lasaleks/go-utils"
 	gormq3 "github.com/lasaleks/gormq"
-	"github.com/lasaleks/ie_common_utils_go"
 )
 
 var (
@@ -20,7 +20,7 @@ func main() {
 	ctx := context.Background()
 	CH_MSG_AMPQ = make(chan gormq3.MessageAmpq, 1)
 
-	ie_common_utils_go.CreatePidFile("/tmp/test_gormq_cons.pid")
+	goutils.CreatePidFile("/tmp/test_gormq_cons.pid")
 	defer os.Remove("/tmp/test_gormq_cons.pid")
 
 	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
@@ -61,7 +61,7 @@ func main() {
 		cancel()
 	}
 	wg.Add(1)
-	go ie_common_utils_go.WaitSignalExit(&wg, ctx, f_shutdown)
+	go goutils.WaitSignalExit(&wg, ctx, f_shutdown)
 	wg.Wait()
 	fmt.Println("End")
 }
