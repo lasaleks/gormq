@@ -1,3 +1,5 @@
+v1.0.6
++ bag fix memory leak
 v1.0.5
 + example consumer
 bag fix end gorotune

@@ -151,6 +151,22 @@ func NewChannelPublisher(wg *sync.WaitGroup, ctx context.Context, conn *Connecti
 	return sendCh, nil
 }
 
+func publishWithContext(channel *amqp.Channel, msg *MessageAmpq) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return channel.PublishWithContext(
+		ctx,
+		msg.Exchange,    // Exchange
+		msg.Routing_key, // Routing key
+		false,           // Mandatory
+		false,           // Immediate
+		amqp.Publishing{
+			ContentType: msg.Content_type,
+			Body:        msg.Data,
+		},
+	)
+}
+
 func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *Connection, pub chan MessageAmpq) (*Channel, error) {
 	sendCh, err := conn.Channel(wg, true, "pub ", 0)
 	if err != nil {
@@ -212,23 +228,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						time.Sleep(time.Millisecond * 10)
 						continue
 					}
-
-					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-					defer cancel()
-
 					atomic.AddInt32(&sendCh.counterPubMsgRMQ, 1)
 					atomic.StoreInt32(&waitConfirm, 1)
-					err := channel.PublishWithContext(
-						ctx,
-						msg.Exchange,    // Exchange
-						msg.Routing_key, // Routing key
-						false,           // Mandatory
-						false,           // Immediate
-						amqp.Publishing{
-							ContentType: msg.Content_type,
-							Body:        msg.Data,
-						},
-					)
+					err := publishWithContext(channel, &msg)
 					if err != nil {
 						atomic.StoreInt32(&waitConfirm, 0)
 						log.Println("Rabbitmq Publish no confirm")
