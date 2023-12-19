@@ -9,30 +9,30 @@ import (
 	"time"
 
 	goutils "github.com/lasaleks/go-utils"
-	gormq3 "github.com/lasaleks/gormq"
+	"github.com/lasaleks/gormq"
 )
 
 var (
-	CH_PUBLISH_MSG_AMPQ chan gormq3.MessageAmpq
+	CH_PUBLISH_MSG_AMPQ chan gormq.MessageAmpq
 )
 
 func main() {
 	var wg sync.WaitGroup
 	ctx := context.Background()
 
-	CH_PUBLISH_MSG_AMPQ = make(chan gormq3.MessageAmpq, 100)
+	CH_PUBLISH_MSG_AMPQ = make(chan gormq.MessageAmpq, 100)
 
 	goutils.CreatePidFile("/tmp/test_gormq_cons.pid")
 	defer os.Remove("/tmp/test_gormq_cons.pid")
-
-	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
+	gormq.Debug = true
+	conn_rmq, err := gormq.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
 	if err != nil {
 		log.Panicln("connect rabbitmq", err)
 	} else {
 		log.Println("RabbitMQ Connected!", conn_rmq.LocalAddr(), conn_rmq.RemoteAddr())
 	}
 	ctx_rmq, cancel_rmq := context.WithCancel(ctx)
-	chSend, err := gormq3.NewChannelPublisherWithAck(&wg, ctx_rmq, conn_rmq, CH_PUBLISH_MSG_AMPQ)
+	chSend, err := gormq.NewChannelPublisherWithAck(&wg, ctx_rmq, conn_rmq, CH_PUBLISH_MSG_AMPQ)
 	if err != nil {
 		log.Println("error init Channel Publisher!", err)
 	} else {
@@ -42,7 +42,7 @@ func main() {
 	exit := false
 	go func() {
 		for !exit {
-			CH_PUBLISH_MSG_AMPQ <- gormq3.MessageAmpq{
+			CH_PUBLISH_MSG_AMPQ <- gormq.MessageAmpq{
 				Exchange:     "testgorm",
 				Routing_key:  "data.key",
 				Content_type: "text/plain",

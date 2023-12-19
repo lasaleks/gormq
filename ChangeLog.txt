@@ -5,3 +5,5 @@ v1.0.5
 bag fix end gorotune
 v1.0.2
 Bag fixed channel reconnection
+v1.0.8
+bag fix повторное создание Exchange, Queue, QueueBind, при переподключении.

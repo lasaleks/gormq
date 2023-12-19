@@ -54,7 +54,7 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 		log.Panic(err)
 	}
 
-	channel := consumeCh.GetOrigChannel()
+	/*channel := consumeCh.GetOrigChannel()
 	for {
 		if channel == nil {
 			if consumeCh.IsClosed() {
@@ -64,28 +64,12 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 			continue
 		}
 		break
-	}
+	}*/
 
-	_, err = channel.QueueDeclare(queuOpt.Name, queuOpt.Durable, queuOpt.Durable, queuOpt.Exclusive, queuOpt.NoWait, queuOpt.Args)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, ex := range exchOpt {
-		err = channel.ExchangeDeclare(ex.Name, amqp.ExchangeTopic, ex.Durable, ex.AutoDelete, ex.Internal, ex.NoWait, ex.Args)
-		if err != nil {
-			return nil, err
-		}
-		for _, key := range ex.Keys {
-			if err := channel.QueueBind(queuOpt.Name, key, ex.Name, false, nil); err != nil {
-				return nil, err
-			}
-		}
-	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		d, err := consumeCh.Consume(queuOpt.Name, "", false, false, false, false, nil)
+		d, err := consumeCh.Consume(exchOpt, queuOpt, "", false, false, false, false, nil)
 		if err != nil {
 			log.Panic(err)
 		}
@@ -219,6 +203,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 			case <-ctx.Done():
 				return
 			case msg := <-pub:
+				if Debug {
+					log.Printf("pub exchange:%s rkey:%s", msg.Exchange, msg.Routing_key)
+				}
 				for {
 					channel := sendCh.GetOrigChannel()
 					if channel == nil {

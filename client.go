@@ -199,7 +199,7 @@ func (ch *Channel) Close() error {
 }
 
 // Consume wrap amqp.Channel.Consume, the returned delivery will end only when channel closed by developer
-func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
+func (ch *Channel) Consume(exchOpt []ExhangeOptions, queuOpt QueueOption, consumer string, autoAck, exclusive, noLocal, noWait bool, args amqp.Table) (<-chan amqp.Delivery, error) {
 	deliveries := make(chan amqp.Delivery)
 
 	go func() {
@@ -217,7 +217,42 @@ func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, 
 				break
 			}
 
-			d, err := channel.Consume(queue, consumer, autoAck, exclusive, noLocal, noWait, args)
+			_, err := channel.QueueDeclare(queuOpt.Name, queuOpt.Durable, queuOpt.Durable, queuOpt.Exclusive, queuOpt.NoWait, queuOpt.Args)
+			if err != nil {
+				debugf("QueueDeclare %s failed, err: %v", queuOpt.Name, err)
+				if ch.IsClosed() {
+					break
+				}
+				time.Sleep(time.Duration(delay) * time.Second)
+				continue
+			}
+
+			for _, ex := range exchOpt {
+				err = channel.ExchangeDeclare(ex.Name, amqp.ExchangeTopic, ex.Durable, ex.AutoDelete, ex.Internal, ex.NoWait, ex.Args)
+				if err != nil {
+					debugf("ExchangeDeclare %s failed, err: %v", ex.Name, err)
+					break
+				}
+				for _, key := range ex.Keys {
+					if err = channel.QueueBind(queuOpt.Name, key, ex.Name, false, nil); err != nil {
+						debugf("QueueBind %s %s %s failed, err: %v", queuOpt.Name, key, ex.Name, err)
+						break
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+			if err != nil {
+				debugf("ExchangeDeclare|QueueDeclare failed, err: %v", err)
+				if ch.IsClosed() {
+					break
+				}
+				time.Sleep(time.Duration(delay) * time.Second)
+				continue
+			}
+
+			delivery, err := channel.Consume(queuOpt.Name, consumer, autoAck, exclusive, noLocal, noWait, args)
 			if err != nil {
 				debugf("consume failed, err: %v", err)
 				if ch.IsClosed() {
@@ -227,7 +262,7 @@ func (ch *Channel) Consume(queue, consumer string, autoAck, exclusive, noLocal, 
 				continue
 			}
 
-			for msg := range d {
+			for msg := range delivery {
 				deliveries <- msg
 			}
 

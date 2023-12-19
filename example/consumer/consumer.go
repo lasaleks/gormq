@@ -8,28 +8,28 @@ import (
 	"sync"
 
 	goutils "github.com/lasaleks/go-utils"
-	gormq3 "github.com/lasaleks/gormq"
+	"github.com/lasaleks/gormq"
 )
 
 var (
-	CH_MSG_AMPQ chan gormq3.MessageAmpq
+	CH_MSG_AMPQ chan gormq.MessageAmpq
 )
 
 func main() {
 	var wg sync.WaitGroup
 	ctx := context.Background()
-	CH_MSG_AMPQ = make(chan gormq3.MessageAmpq, 1)
+	CH_MSG_AMPQ = make(chan gormq.MessageAmpq, 1)
 
 	goutils.CreatePidFile("/tmp/test_gormq_cons.pid")
 	defer os.Remove("/tmp/test_gormq_cons.pid")
 
-	conn_rmq, err := gormq3.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
+	conn_rmq, err := gormq.NewConnect("amqp://rabbit:rabbitie@localhost:5672/")
 	if err != nil {
 		log.Panicln("connect rabbitmq", err)
 	}
-	gormq3.Debug = true
-	chCons, err := gormq3.NewChannelConsumer(
-		&wg, conn_rmq, []gormq3.ExhangeOptions{
+	gormq.Debug = true
+	chCons, err := gormq.NewChannelConsumer(
+		&wg, conn_rmq, []gormq.ExhangeOptions{
 			{
 				Name:         "testgorm",
 				ExchangeType: "topic",
@@ -38,12 +38,15 @@ func main() {
 				},
 			},
 		},
-		gormq3.QueueOption{
+		gormq.QueueOption{
 			QOS:  50,
 			Name: "test_consumer_gormq3",
 		},
 		CH_MSG_AMPQ,
 	)
+	if err != nil {
+		log.Panicln(err)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	go func() {
 		fmt.Println("Run Consumer")
@@ -52,7 +55,7 @@ func main() {
 			case <-ctx.Done():
 				return
 			case msg := <-CH_MSG_AMPQ:
-				fmt.Println("msg:", msg)
+				fmt.Printf("%s %s %q\n", msg.Exchange, msg.Routing_key, msg.Data)
 			}
 		}
 	}()
