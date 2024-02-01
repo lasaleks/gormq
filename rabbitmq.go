@@ -12,6 +12,31 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+type PromValue interface {
+	Set(float64)
+	Inc()
+}
+
+var (
+	ReConnectCounter PromValue // счетчик подключений
+	ConnectGauge     PromValue // статус подключния
+	SendMsgCounter   PromValue // счетчик отправленных сообщений
+	RecvMsgCounter   PromValue // счетчик полученных сообщений
+)
+
+func setStatusOnLine(value bool) {
+	if ConnectGauge != nil {
+		if value {
+			if ReConnectCounter != nil {
+				ReConnectCounter.Inc()
+			}
+			ConnectGauge.Set(1)
+		} else {
+			ConnectGauge.Set(0)
+		}
+	}
+}
+
 type MessageAmpq struct {
 	Exchange     string
 	Routing_key  string
@@ -75,6 +100,9 @@ func NewChannelConsumer(wg *sync.WaitGroup, conn *Connection, exchOpt []ExhangeO
 		}
 
 		for msg := range d {
+			if RecvMsgCounter != nil {
+				RecvMsgCounter.Inc()
+			}
 			cons <- MessageAmpq{
 				Exchange:     msg.Exchange,
 				Routing_key:  msg.RoutingKey,
@@ -214,6 +242,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						}
 						time.Sleep(time.Millisecond * 10)
 						continue
+					}
+					if RecvMsgCounter != nil {
+						SendMsgCounter.Inc()
 					}
 					atomic.AddInt32(&sendCh.counterPubMsgRMQ, 1)
 					atomic.StoreInt32(&waitConfirm, 1)

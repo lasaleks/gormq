@@ -289,32 +289,33 @@ func Dial(url string) (*Connection, error) {
 		connection: conn,
 		mu:         sync.Mutex{},
 	}
-
+	setStatusOnLine(true)
 	go func() {
 		for {
 			connect := connection.GetConnect()
 
 			reason, ok := <-connect.NotifyClose(make(chan *amqp.Error))
 			// exit this goroutine if closed by developer
+			setStatusOnLine(false)
 			if !ok {
 				debugf("connection closed")
 				break
 			}
 			debugf("connection closed, reason: %v", reason)
-
 			// reconnect if not closed by developer
 			for {
 				// wait 1s for reconnect
 				time.Sleep(time.Duration(delay) * time.Second)
-
 				conn, err := amqp.Dial(url)
 				if err == nil {
 					connection.mu.Lock()
 					connection.connection = conn
 					connection.mu.Unlock()
+					setStatusOnLine(true)
 					debugf("reconnect success")
 					break
 				}
+				setStatusOnLine(false)
 
 				debugf("reconnect failed, err: %v", err)
 			}
