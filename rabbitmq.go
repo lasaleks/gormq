@@ -21,10 +21,11 @@ type Counter interface {
 }
 
 var (
-	ReConnectCounter Counter // счетчик подключений
-	ConnectGauge     Gauge   // статус подключния
-	SendMsgCounter   Counter // счетчик отправленных сообщений
-	RecvMsgCounter   Counter // счетчик полученных сообщений
+	ReConnectCounter    Counter // счетчик подключений
+	ConnectGauge        Gauge   // статус подключния
+	SendMsgCounter      Counter // счетчик отправленных сообщений
+	SendMsgErrorCounter Counter // счетчик ошибок при отправлении сообщений
+	RecvMsgCounter      Counter // счетчик полученных сообщений
 )
 
 func setStatusOnLine(value bool) {
@@ -234,6 +235,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 			case <-ctx.Done():
 				return
 			case msg := <-pub:
+				if RecvMsgCounter != nil {
+					SendMsgCounter.Inc()
+				}
 				if Debug {
 					log.Printf("pub exchange:%s rkey:%s", msg.Exchange, msg.Routing_key)
 				}
@@ -245,9 +249,6 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						}
 						time.Sleep(time.Millisecond * 10)
 						continue
-					}
-					if RecvMsgCounter != nil {
-						SendMsgCounter.Inc()
 					}
 					atomic.AddInt32(&sendCh.counterPubMsgRMQ, 1)
 					atomic.StoreInt32(&waitConfirm, 1)
@@ -285,6 +286,9 @@ func NewChannelPublisherWithAck(wg *sync.WaitGroup, ctx context.Context, conn *C
 						}
 						if ack {
 							break
+						}
+						if SendMsgErrorCounter != nil {
+							SendMsgErrorCounter.Inc()
 						}
 						log.Println("Rabbitmq Push didn't confirm. Retrying...", msg.Exchange, msg.Routing_key)
 					}
