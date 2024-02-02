@@ -12,16 +12,19 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-type PromValue interface {
+type Gauge interface {
 	Set(float64)
+}
+
+type Counter interface {
 	Inc()
 }
 
 var (
-	ReConnectCounter PromValue // счетчик подключений
-	ConnectGauge     PromValue // статус подключния
-	SendMsgCounter   PromValue // счетчик отправленных сообщений
-	RecvMsgCounter   PromValue // счетчик полученных сообщений
+	ReConnectCounter Counter // счетчик подключений
+	ConnectGauge     Gauge   // статус подключния
+	SendMsgCounter   Counter // счетчик отправленных сообщений
+	RecvMsgCounter   Counter // счетчик полученных сообщений
 )
 
 func setStatusOnLine(value bool) {
